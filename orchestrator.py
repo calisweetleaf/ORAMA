@@ -1428,6 +1428,20 @@ class Orchestrator:
         async with self._metrics_lock:
             return dict(self.metrics)
 
+    async def publish_event(self, event: Event) -> None:
+        """Publish an event to the event bus. Wrapper around event_bus.publish."""
+        if not hasattr(self, 'event_bus') or self.event_bus is None:
+            self.logger.error("Event bus not initialized in Orchestrator.")
+            return
+        await self.event_bus.publish(event)
+
+    async def process_event_queue(self, batch_size: int = MAX_EVENT_BATCH_SIZE) -> int:
+        """Process a batch of events from the event queue. Wrapper around event_bus.process_events."""
+        if not hasattr(self, 'event_bus') or self.event_bus is None:
+            self.logger.error("Event bus not initialized in Orchestrator.")
+            return 0
+        return await self.event_bus.process_events(batch_size)
+
 # Simple test code when run directly
 if __name__ == "__main__":
     import argparse

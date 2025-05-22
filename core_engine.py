@@ -1364,27 +1364,27 @@ Also include verification steps to validate the success of critical operations.
 
 Respond in JSON format with the following structure:
 ```json
-{
+{{
   "steps": [
-    {
+    {{
       "description": "Step description",
       "action": "action_name",
-      "params": {
+      "params": {{
         "param1": "value1",
         "param2": "value2"
-      },
+      }},
       "conditions": ["condition1", "condition2"]
-    }
+    }}
   ],
   "verification": [
-    {
+    {{
       "after_step": 1,
       "check": "What to verify",
       "expected": "Expected outcome",
       "fallback": "What to do if verification fails"
-    }
+    }}
   ]
-}
+}}
 ```
 
 Ensure your plan is detailed, feasible, and accounts for potential failures."""

@@ -1,0 +1,67 @@
+# Core system
+psutil>=5.9.0
+asyncio  # stdlib in Python 3.7+
+dataclasses; python_version<'3.7'
+typing-extensions
+pyperclip>=1.8.2
+
+# Windows integration
+pywin32; platform_system=='Windows'
+
+# Async I/O and networking
+aiofiles
+aiohttp>=3.8.1
+
+# Advanced metrics and data processing
+numpy>=1.24.0
+
+# Cognitive/LLM and NLP
+nltk
+# If using HuggingFace models locally:
+# transformers
+
+# Computer vision and OCR
+opencv-python>=4.7.0
+pillow
+pytesseract
+# For YOLO object detection (choose one):
+yolov5  # or yolov9 if available
+
+# Vector database
+lancedb
+
+# Graph/Knowledge DB
+networkx
+# or for advanced graph DB:
+# neo4j
+
+# Input simulation and automation
+pyautogui>=0.9.53
+playwright>=1.35.0
+
+# Hardware and device integration
+pyserial>=3.5; platform_system!='Browser'
+hidapi>=0.14.0; platform_system!='Browser'
+
+# Audio support
+pyttsx3>=2.90; platform_system!='Browser'
+
+# System information
+distro>=1.8.0; sys_platform == "linux"
+wmi>=1.5.1; platform_system=='Windows'
+
+# Terminal UI and CLI enhancements
+colorama
+rich
+prompt_toolkit
+
+# For system utilities (stdlib)
+shutil
+logging
+json
+uuid
+base64
+socket
+tempfile
+signal
+traceback

@@ -1,0 +1,85 @@
+# ORAMA System Configuration Template
+# Rename to config.yaml and adjust values as needed
+
+system:
+  name: "ORAMA"
+  version: "1.0"
+  
+  resources:
+    cpu:
+      limit: 80  # CPU usage limit percentage
+      priority: high
+    memory:
+      limit: 12288  # Max memory usage in MB
+      reserve: 4096  # Reserved memory in MB
+    gpu:
+      enable: true
+      memory_limit: 5120  # GPU memory limit in MB
+    
+  paths:
+    data: "./data"
+    models: "./models"
+    plugins: "./plugins"
+    logs: "./logs"
+
+components:
+  perception:
+    screen_capture:
+      rate: 10
+      resolution: "native"
+      regions: ["full"]
+    
+    vision:
+      model: "yolov9-ui.onnx"
+      confidence: 0.75
+      
+    ocr:
+      engine: "tesseract"
+      languages: ["eng"]
+      
+  reasoning:
+    llm:
+      model: "deepseek-coder-7b-instruct.Q5_K_M.gguf"
+      context_size: 8192
+      temperature: 0.7
+      
+    planning:
+      max_steps: 20
+      validation: true
+      
+  action:
+    input:
+      delay_factor: 1.0
+      verification: true
+      
+    browser:
+      engine: "playwright"
+      headless: false
+      
+  memory:
+    vector:
+      engine: "lancedb"
+      dimension: 768
+      index: "hnsw"
+      
+    graph:
+      engine: "sqlite-graph"
+
+preferences:
+  interface:
+    theme: "system"
+    layout: "standard"
+    
+  interaction:
+    verbosity: "normal"
+    confirmation_level: "medium"
+    
+  security:
+    operation_approval:
+      file_delete: true
+      system_change: true
+      network_access: true
+      
+  performance:
+    quality_vs_speed: 0.7  # 0=speed, 1=quality
+    resource_usage: "balanced"

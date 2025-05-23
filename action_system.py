@@ -789,7 +789,6 @@ class ActionSystem:
                 cmd_parts = cmd_lower.split()
             else:
                 # Use shlex for shell=False to better handle quoted arguments.
-                import shlex
                 cmd_parts = shlex.split(command.lower()) # Use original case command for shlex, then lower for parts
         except ValueError: # shlex.split can fail on unterminated quotes
             cmd_parts = cmd_lower.split() # Fallback to simple split

@@ -75,9 +75,41 @@ class ORAMASystem:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
             self.logger.info(f"Loaded configuration from {config_path}")
+
+            # Validate configuration
+            required_keys = ["system", "components", "preferences", "orchestrator"]
+            for key in required_keys:
+                if key not in config:
+                    raise ValueError(f"Missing '{key}' configuration in {config_path}")
+
+            required_system_paths = ["paths"]
+            for key in required_system_paths:
+                if key not in config["system"]:
+                    raise ValueError(f"Missing 'system.{key}' configuration in {config_path}")
+
+            required_components_keys = ["perception", "reasoning", "action", "memory"]
+            for key in required_components_keys:
+                if key not in config["components"]:
+                    raise ValueError(f"Missing 'components.{key}' configuration in {config_path}")
+            
+            # Validate model paths
+            models_path = Path(config["system"]["paths"]["models"])
+            
+            llm_model_name = config.get("components", {}).get("reasoning", {}).get("llm", {}).get("model")
+            if llm_model_name and llm_model_name.endswith(".gguf"): # Check if it's a local model
+                llm_model_path = models_path / llm_model_name
+                if not llm_model_path.exists():
+                    raise FileNotFoundError(f"LLM model file not found: {llm_model_path}")
+
+            vision_model_name = config.get("components", {}).get("perception", {}).get("vision", {}).get("model")
+            if vision_model_name and vision_model_name.endswith(".onnx"): # Check if it's a local model
+                vision_model_path = models_path / vision_model_name
+                if not vision_model_path.exists():
+                    raise FileNotFoundError(f"Vision model file not found: {vision_model_path}")
+
             return config
         except Exception as e:
-            self.logger.error(f"Failed to load config: {e}")
+            self.logger.error(f"Failed to load or validate config: {e}")
             raise
 
     def _evaluate_system_health(self, metrics: SystemMetrics, alerts: List[Alert]) -> SystemStatus:
@@ -150,12 +182,9 @@ class ORAMASystem:
             
             while self.running:
                 try:
-                    # Process events through the orchestrator
-                    await self.orchestrator.process_event_queue()
-                    
                     # Get system metrics and alerts
-                    metrics = await self.monitor.get_metrics()
-                    alerts = await self.monitor.get_alerts()
+                    metrics = self.monitor.get_metrics() # Corrected: SystemMonitor.get_metrics is not async
+                    alerts = self.monitor.get_alerts() # Corrected: SystemMonitor.get_alerts is not async
                     
                     # Evaluate system health
                     status = self._evaluate_system_health(metrics, alerts)

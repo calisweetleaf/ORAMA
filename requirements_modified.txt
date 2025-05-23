@@ -21,14 +21,14 @@ nltk
 # transformers
 
 # Computer vision and OCR
-opencv-python>=4.7.0
+# opencv-python>=4.7.0
 pillow
-pytesseract
+# pytesseract
 # For YOLO object detection (choose one):
-yolov5  # or yolov9 if available
+# yolov5  # or yolov9 if available
 
 # Vector database
-lancedb
+# lancedb
 
 # Graph/Knowledge DB
 networkx
@@ -36,8 +36,8 @@ networkx
 # neo4j
 
 # Input simulation and automation
-pyautogui>=0.9.53
-playwright>=1.35.0
+# pyautogui>=0.9.53
+# playwright>=1.35.0
 
 # Hardware and device integration
 pyserial>=3.5; platform_system!='Browser'

@@ -853,7 +853,7 @@ class SystemMonitor:
             return True
         return False
     
-    def get_system_metrics(self) -> SystemMetrics:
+    def get_metrics(self) -> SystemMetrics:
         """Get current system metrics."""
         return self.system_metrics
     
@@ -879,7 +879,7 @@ class SystemMonitor:
         """Get list of available metrics."""
         return self.metrics_buffer.get_metric_names()
     
-    def get_active_alerts(self) -> List[Alert]:
+    def get_alerts(self) -> List[Alert]:
         """Get list of active alerts."""
         return self.active_alerts
     

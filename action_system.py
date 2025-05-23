@@ -33,9 +33,9 @@ from urllib.parse import urlparse, urljoin
 from io import BytesIO
 
 # Import ORAMA modules
-from .resource_manager import ResourceManager
-from .debug_manager import DebugManager
-from .system_manager import SystemManager
+from orama.resource_manager import ResourceManager
+from orama.debug_manager import DebugManager
+from orama.system_manager import SystemManager
 
 # Input simulation
 try:

@@ -1,12 +1,18 @@
-# Core system
+# ORAMA System - Python Requirements
+# This file lists all external dependencies required by the ORAMA codebase.
+# For Windows 11, Python 3.11+ is recommended.
+
+# Core system monitoring and utilities
 psutil>=5.9.0
-# asyncio  # stdlib in Python 3.7+
+# dataclasses is only needed for Python <3.7
+# asyncio is part of the Python stdlib (>=3.7)
 dataclasses; python_version<'3.7'
 typing-extensions
 pyperclip>=1.8.2
 
-# Windows integration
+# Windows integration (Win32 API, WMI)
 pywin32; platform_system=='Windows'
+wmi>=1.5.1; platform_system=='Windows'
 
 # Async I/O and networking
 aiofiles
@@ -17,7 +23,7 @@ numpy>=1.24.0
 
 # Cognitive/LLM and NLP
 nltk
-# If using HuggingFace models locally:
+# If using HuggingFace models locally, uncomment:
 # transformers
 
 # Computer vision and OCR
@@ -32,10 +38,10 @@ lancedb
 
 # Graph/Knowledge DB
 networkx
-# or for advanced graph DB:
+# For advanced graph DB support, uncomment:
 # neo4j
 
-# Input simulation and automation
+# Input simulation and browser automation
 pyautogui>=0.9.53
 playwright>=1.35.0
 
@@ -46,22 +52,13 @@ hidapi>=0.14.0; platform_system!='Browser'
 # Audio support
 pyttsx3>=2.90; platform_system!='Browser'
 
-# System information
+# System information (Linux only)
 distro>=1.8.0; sys_platform == "linux"
-wmi>=1.5.1; platform_system=='Windows'
 
 # Terminal UI and CLI enhancements
 colorama
 rich
 prompt_toolkit
 
-# For system utilities (stdlib)
-# shutil
-# logging
-# json
-# uuid
-# base64
-# socket
-# tempfile
-# signal
-# traceback
+# The following are part of the Python stdlib and do not need to be listed:
+# shutil, logging, json, uuid, base64, socket, tempfile, signal, traceback

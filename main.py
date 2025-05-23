@@ -120,13 +120,30 @@ class ORAMASystem:
             ResourceType.DISK: 95.0
         }
         
-        # Check for critical resource usage
+        # Check for critical resource usage (CPU, Memory, Disk)
+        disk_usage_critical = False
+        critical_disk_path = ""
+        if hasattr(metrics, 'disk_percent') and isinstance(metrics.disk_percent, dict):
+            for disk_path, usage_percent in metrics.disk_percent.items():
+                if usage_percent > critical_resources[ResourceType.DISK]:
+                    disk_usage_critical = True
+                    critical_disk_path = disk_path # Store the path of the first critical disk
+                    break # Exit loop once a critical disk is found
+
         if metrics.cpu_percent > critical_resources[ResourceType.CPU] or \
-           metrics.memory_percent > critical_resources[ResourceType.MEMORY]:
+           metrics.memory_percent > critical_resources[ResourceType.MEMORY] or \
+           disk_usage_critical:
+            details = "Critical resource threshold exceeded: "
+            if metrics.cpu_percent > critical_resources[ResourceType.CPU]:
+                details += f"CPU at {metrics.cpu_percent}%; "
+            if metrics.memory_percent > critical_resources[ResourceType.MEMORY]:
+                details += f"Memory at {metrics.memory_percent}%; "
+            if disk_usage_critical:
+                details += f"Disk {critical_disk_path} at {metrics.disk_percent[critical_disk_path]}%;"
             return SystemStatus(
                 healthy=False,
                 critical=True,
-                details="Critical resource threshold exceeded"
+                details=details.strip().rstrip(';')
             )
         
         # Check for critical alerts

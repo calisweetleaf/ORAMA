@@ -384,7 +384,17 @@ class CognitiveEngine:
         
         # Release resources
         if hasattr(self, 'ui_detector') and self.ui_detector:
+            # Explicitly delete the model if it exists to free resources
+            if "model" in self.ui_detector and self.ui_detector["model"] is not None:
+                # Assuming self.ui_detector["model"] is the ONNX session
+                # If ONNXRuntime sessions have a close/release method, it should be called here.
+                # For now, just deleting the reference as per current pattern.
+                del self.ui_detector["model"]
+                self.logger.info("UI detection model reference deleted from ui_detector")
+            
+            # Now delete the ui_detector dictionary itself
             del self.ui_detector
+            self.logger.info("UI detector dictionary deleted")
             
         # Shutdown thread pool
         self.executor.shutdown(wait=True)
@@ -445,7 +455,7 @@ class CognitiveEngine:
             self.perception_system = {
                 "initialized": True,
                 "last_screen_hash": None,
-                "screen_change_threshold": self.screen_capture_config.get("change_threshold", 0.05),
+                "screen_change_threshold": int(self.screen_capture_config.get("change_threshold", 5)),
                 "capture_regions": self.screen_capture_config.get("regions", ["full"]),
                 "resolution": self.screen_capture_config.get("resolution", "native"),
                 "rate": self.screen_capture_config.get("rate", 10)  # frames per second
@@ -613,6 +623,7 @@ class CognitiveEngine:
     
     async def _capture_screen(self) -> Optional[np.ndarray]:
         """Capture current screen state."""
+        self.logger.warning("Using SIMULATED screen capture. Implement actual screen capture for real functionality.")
         if not CV_AVAILABLE:
             return None
             
@@ -643,15 +654,48 @@ class CognitiveEngine:
         """Process captured screen and detect significant changes."""
         try:
             # Calculate screen hash or feature signature to detect changes
-            # This is a simplified implementation using average hash
-            resized = cv2.resize(screen, (32, 32), interpolation=cv2.INTER_AREA)
+            # Using Difference Hash (dHash)
+            hash_size = 8 
+            # Resize to (hash_size + 1) x hash_size to compare adjacent pixels horizontally
+            resized = cv2.resize(screen, (hash_size + 1, hash_size), interpolation=cv2.INTER_AREA)
             gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-            screen_hash = gray.mean()
             
-            # Check if screen changed significantly
-            if self.current_screen is None or abs(self.perception_system["last_screen_hash"] - screen_hash) > self.perception_system["screen_change_threshold"]:
+            # Compute dHash
+            dhash_str = []
+            for y in range(hash_size):
+                for x in range(hash_size): # Iterate hash_size times, comparing x with x+1
+                    if gray[y, x] > gray[y, x + 1]:
+                        dhash_str.append("1")
+                    else:
+                        dhash_str.append("0")
+            current_dhash = "".join(dhash_str)
+
+            # Check if screen changed significantly using Hamming distance
+            significant_change = False
+            if self.current_screen is None or self.perception_system.get("last_screen_hash") is None:
+                significant_change = True
+            else:
+                last_dhash = self.perception_system["last_screen_hash"]
+                # Calculate Hamming distance
+                if len(last_dhash) == len(current_dhash): # Ensure hashes are comparable
+                    hamming_distance = sum(c1 != c2 for c1, c2 in zip(last_dhash, current_dhash))
+                    # The screen_change_threshold now refers to Hamming distance.
+                    # A common threshold for 64-bit dHash might be e.g. 5-10.
+                    # The existing default of 0.05 is too low for Hamming distance.
+                    # Let's assume a default Hamming distance threshold if not properly set.
+                    # For this example, we'll use a hardcoded threshold, but ideally this should be configurable.
+                    # If self.perception_system["screen_change_threshold"] was 0.05, it's not suitable for Hamming.
+                    # Let's use a more appropriate example threshold like 5 for a 64-bit hash.
+                    # This threshold should be adjusted based on empirical testing.
+                    # For now, we'll use the configured threshold, but it needs to be set appropriately for dHash.
+                    if hamming_distance > self.perception_system["screen_change_threshold"]:
+                        significant_change = True
+                else: # Hashes are not comparable, assume change
+                    significant_change = True
+
+            if significant_change:
                 self.current_screen = screen
-                self.perception_system["last_screen_hash"] = screen_hash
+                self.perception_system["last_screen_hash"] = current_dhash
                 
                 # Emit screen change event
                 await self._emit_event(
@@ -776,7 +820,9 @@ class CognitiveEngine:
             gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
             
             # Apply preprocessing to improve OCR
-            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+            # _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV) # Original line
+            thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                           cv2.THRESH_BINARY_INV, 11, 2)
             
             # Find potential text regions
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -874,37 +920,79 @@ class CognitiveEngine:
                             {"process_id": process_id, "name": process_info["name"]}
                         )
                 
-                # Check watched directories for changes
+                # Check watched directories for changes (now non-blocking in the loop)
                 for directory in self.system_monitor["watched_directories"]:
-                    if os.path.exists(directory):
-                        current_state = {f.name: f.stat().st_mtime for f in Path(directory).glob("*")}
-                        previous_state = self.system_monitor["file_states"].get(directory, {})
-                        
-                        # Detect changes
-                        for filename, mtime in current_state.items():
-                            if filename not in previous_state or mtime > previous_state[filename]:
-                                file_path = os.path.join(directory, filename)
-                                
-                                await self._emit_event(
-                                    EventType.FILE_CHANGED,
-                                    {"path": file_path, "type": "modified"}
-                                )
-                        
-                        # Detect deletions
-                        for filename in previous_state:
-                            if filename not in current_state:
-                                file_path = os.path.join(directory, filename)
-                                
-                                await self._emit_event(
-                                    EventType.FILE_CHANGED,
-                                    {"path": file_path, "type": "deleted"}
-                                )
-                        
-                        # Update state
-                        self.system_monitor["file_states"][directory] = current_state
+                    previous_file_states_for_dir = self.system_monitor["file_states"].get(directory, {})
+                    
+                    # Offload blocking file operations to a thread
+                    new_file_states_for_dir, file_change_events = await asyncio.to_thread(
+                        self._perform_file_check_sync, directory, previous_file_states_for_dir
+                    )
+                    
+                    # Process detected events
+                    for event_data in file_change_events:
+                        await self._emit_event(EventType.FILE_CHANGED, event_data)
+                    
+                    # Update state if new states were successfully fetched
+                    if new_file_states_for_dir is not None:
+                         self.system_monitor["file_states"][directory] = new_file_states_for_dir
+
         except Exception as e:
             self.logger.error(f"System state monitoring failed: {e}", exc_info=True)
-    
+
+    def _perform_file_check_sync(self, directory_path: str, previous_states: Dict[str, float]) -> Tuple[Optional[Dict[str, float]], List[Dict]]:
+        """
+        Synchronous helper to check a single directory for file changes.
+        Returns new file states and a list of change events.
+        """
+        change_events = []
+        current_states = {}
+
+        try:
+            if not os.path.exists(directory_path):
+                # If directory doesn't exist (e.g., was deleted), mark all previous files as deleted
+                for filename in previous_states:
+                    file_path_abs = os.path.join(directory_path, filename) # Construct full path for event
+                    change_events.append({"path": file_path_abs, "type": "deleted"})
+                return None, change_events # Return None for states as dir is gone
+
+            # Expand user-specific paths like ~
+            expanded_directory_path = Path(directory_path).expanduser()
+            if not expanded_directory_path.exists():
+                 # Log or handle if path doesn't exist after expansion (similar to above)
+                if previous_states: # If there were previous states, they are now effectively deleted
+                    for filename in previous_states:
+                        change_events.append({"path": os.path.join(str(expanded_directory_path), filename), "type": "deleted"})
+                return None, change_events
+
+
+            current_states = {f.name: f.stat().st_mtime for f in expanded_directory_path.glob("*") if f.is_file()}
+
+            # Detect new or modified files
+            for filename, mtime in current_states.items():
+                if filename not in previous_states:
+                    change_events.append({"path": os.path.join(str(expanded_directory_path), filename), "type": "created"})
+                elif mtime > previous_states[filename]:
+                    change_events.append({"path": os.path.join(str(expanded_directory_path), filename), "type": "modified"})
+
+            # Detect deletions
+            for filename in previous_states:
+                if filename not in current_states:
+                    change_events.append({"path": os.path.join(str(expanded_directory_path), filename), "type": "deleted"})
+            
+            return current_states, change_events
+
+        except Exception as e:
+            # Log error from within the sync function for clarity, but _check_system_state will also log.
+            # self.logger.error(f"Error in _perform_file_check_sync for {directory_path}: {e}", exc_info=True) 
+            # Cannot use self.logger directly in a static/non-instance method if we make it static.
+            # For now, it's an instance method, so self.logger is fine.
+            # Or, pass logger as an argument, or let the caller handle all logging.
+            # For simplicity here, we'll rely on the caller's logger.
+            # Return previous_states to avoid losing state on temporary error, and empty events list.
+            # Alternatively, return (None, []) to signal error and let caller decide. Let's signal error.
+            return None, [] # Signal error by returning None for states
+
     async def _emit_event(self, event_type: EventType, data: Dict) -> None:
         """Emit a perception event to the event buffer."""
         try:
@@ -1802,63 +1890,84 @@ Ensure your recovery plan is safe and has a high chance of success."""
             # Set temperature
             temp = temperature if temperature is not None else self.temperature
             
-            try:
-                ollama_host = self.llm_config.get("host", "http://localhost:11434")
-                
-                # Make request
-                async with self.llm_client.stream(
-                    "POST",
-                    f"{ollama_host}/api/generate",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "stream": True,
-                        "temperature": temp,
-                        "top_p": self.top_p,
-                        "num_predict": 1024,  # Limit response length
-                        "stop": ["<|im_end|>", "<|endoftext|>"]
-                    }
-                ) as response:
-                    # Check response
-                    if response.status_code != 200:
-                        self.logger.warning(f"Streaming LLM inference failed with status {response.status_code}")
-                        return False
+            retry_count = 0
+            while retry_count < MAX_RETRIES:
+                model_to_use = self.model
+                try:
+                    if retry_count > 0:
+                        await asyncio.sleep(1 * retry_count) # Delay before retry
+                        if self.fallback_model:
+                            model_to_use = self.fallback_model
+                            self.logger.info(f"Streaming LLM: Using fallback model: {model_to_use} after {retry_count} retries.")
+                        else:
+                            self.logger.info(f"Streaming LLM: Retrying with primary model {model_to_use} (no fallback defined), attempt {retry_count + 1}.")
+                    else:
+                         self.logger.debug(f"Streaming LLM: Attempt {retry_count + 1} with model {model_to_use}.")
+
+
+                    ollama_host = self.llm_config.get("host", "http://localhost:11434")
                     
-                    # Process streaming response
-                    full_response = ""
-                    async for chunk in response.aiter_bytes():
-                        try:
-                            # Parse JSON chunk
-                            chunk_str = chunk.decode('utf-8')
-                            
-                            # Handle multiple JSON objects in stream
-                            for line in chunk_str.splitlines():
-                                if not line.strip():
-                                    continue
-                                    
-                                data = json.loads(line)
-                                token = data.get("response", "")
-                                full_response += token
+                    # Make request
+                    async with self.llm_client.stream(
+                        "POST",
+                        f"{ollama_host}/api/generate",
+                        json={
+                            "model": model_to_use,
+                            "prompt": prompt,
+                            "stream": True,
+                            "temperature": temp,
+                            "top_p": self.top_p,
+                            "num_predict": 1024,  # Limit response length
+                            "stop": ["<|im_end|>", "<|endoftext|>"]
+                        }
+                    ) as response:
+                        # Check response status BEFORE attempting to process the stream
+                        if response.status_code != 200:
+                            self.logger.warning(f"Streaming LLM inference failed with status {response.status_code} for model {model_to_use}. Response: {await response.aread()}")
+                            retry_count += 1
+                            continue # Go to next retry iteration
+                        
+                        # Process streaming response
+                        full_response = ""
+                        async for chunk in response.aiter_bytes():
+                            try:
+                                # Parse JSON chunk
+                                chunk_str = chunk.decode('utf-8')
                                 
-                                # Call callback with token
-                                if token and callback:
-                                    callback(token)
-                        except Exception as e:
-                            self.logger.error(f"Error processing LLM stream chunk: {e}")
-                    
-                    # Update metrics
-                    end_time = time.time()
-                    self.metrics["llm_calls"] += 1
-                    self.metrics["llm_latency_ms"] = (end_time - start_time) * 1000
-                    
-                    # Approximate token counts
-                    self.metrics["llm_tokens_in"] += len(prompt.split()) * 0.75
-                    self.metrics["llm_tokens_out"] += len(full_response.split()) * 0.75
-                    
-                    return True
-            except Exception as e:
-                self.logger.error(f"Streaming LLM inference error: {e}", exc_info=True)
-                return False
+                                # Handle multiple JSON objects in stream
+                                for line in chunk_str.splitlines():
+                                    if not line.strip():
+                                        continue
+                                        
+                                    data = json.loads(line)
+                                    token = data.get("response", "")
+                                    full_response += token
+                                    
+                                    # Call callback with token
+                                    if token and callback:
+                                        callback(token)
+                            except Exception as e: # Error while processing a chunk
+                                self.logger.error(f"Error processing LLM stream chunk for model {model_to_use}: {e}", exc_info=True)
+                                # Depending on severity, you might want to break or continue
+                                # For now, we log and continue processing other chunks, but this might indicate a larger issue.
+                        
+                        # If stream completed without HTTP error for this attempt
+                        end_time = time.time()
+                        self.metrics["llm_calls"] += 1
+                        self.metrics["llm_latency_ms"] = (end_time - start_time) * 1000
+                        self.metrics["llm_tokens_in"] += len(prompt.split()) * 0.75 # Approximate
+                        self.metrics["llm_tokens_out"] += len(full_response.split()) * 0.75 # Approximate
+                        return True # Success for this attempt
+
+                except httpx.RequestError as e: # Specific exception for HTTPX request errors
+                    self.logger.warning(f"Streaming LLM inference HTTPX RequestError for model {model_to_use} (attempt {retry_count + 1}/{MAX_RETRIES}): {e}", exc_info=True)
+                    retry_count += 1
+                except Exception as e: # Catch other exceptions during setup or initial connection
+                    self.logger.error(f"Streaming LLM inference error for model {model_to_use} (attempt {retry_count + 1}/{MAX_RETRIES}): {e}", exc_info=True)
+                    retry_count += 1
+            
+            self.logger.error(f"Streaming LLM inference failed after {MAX_RETRIES} retries for prompt: {prompt[:100]}...")
+            return False
     
     #--------------------------------------------------------------------
     # Task Management Methods

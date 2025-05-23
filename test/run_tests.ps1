@@ -27,62 +27,147 @@ $python_modules = @(
 
 $all_tests_passed = $true
 
-foreach ($module_file_rel_path in $python_modules) {
- # Construct absolute path for clarity, though relative should work from root
- $module_file_abs_path = Join-Path (Get-Location).Path $module_file_rel_path
-    
- Write-Host ""
- Write-Host "Testing module: $module_file_rel_path"
- Write-Host "Full path: $module_file_abs_path"
- Write-Host "------------------------------------"
+# 1. Python version check
+Write-Section "Python Version Check"
+python --version
+if ($LASTEXITCODE -ne 0) {
+ Write-Host "[FATAL] Python is not installed or not in PATH." -ForegroundColor Red
+ exit 1
+}
 
- # Test 1: Python syntax check
- Write-Host "Running syntax check (py_compile) for $module_file_rel_path ..."
- python -m py_compile $module_file_abs_path
- if ($LASTEXITCODE -ne 0) {
-  Write-Error "Syntax check FAILED for $module_file_rel_path."
-  $all_tests_passed = $false
+# 2. Dependency check (requirements.txt)
+Write-Section "Dependency Check (requirements.txt)"
+if (Test-Path "requirements.txt") {
+ $missing = @()
+ $reqs = Get-Content requirements.txt | Where-Object { $_ -notmatch "^#" -and $_.Trim() -ne "" }
+ foreach ($req in $reqs) {
+  $pkg = $req -replace ".*([a-zA-Z0-9\-_]+).*", '$1'
+  if ($pkg -eq "dataclasses" -or $pkg -eq "asyncio") { continue }
+  python -c "import $pkg" 2>$null
+  if ($LASTEXITCODE -ne 0) { $missing += $pkg }
+ }
+ if ($missing.Count -eq 0) {
+  Write-Result "All required packages importable" $true
  }
  else {
-  Write-Host "Syntax check PASSED for $module_file_rel_path."
+  Write-Result "Missing packages: $($missing -join ", ")" $false
  }
-
- # Test 2: Attempt to run specific modules if they have a testable __main__
- if ($module_file_rel_path -eq "core_engine.py") {
-  Write-Host "Attempting to run $module_file_rel_path (expects test_cognitive_engine)..."
-  python $module_file_abs_path
-  if ($LASTEXITCODE -ne 0) {
-   Write-Error "Execution FAILED for $module_file_rel_path."
-   $all_tests_passed = $false
-  }
-  else {
-   Write-Host "Execution of $module_file_rel_path finished."
-  }
- }
- elseif ($module_file_rel_path -eq "interface.py") {
-  Write-Host "Attempting to run '$module_file_rel_path help'..."
-  python $module_file_abs_path help # Assumes 'help' is a valid command for interface.py
-  if ($LASTEXITCODE -ne 0) {
-   Write-Error "Execution FAILED for '$module_file_rel_path help'."
-   $all_tests_passed = $false
-  }
-  else {
-   Write-Host "Execution of '$module_file_rel_path help' finished."
-  }
- }
- # For other modules like main.py, memory_engine.py, orchestrator.py, etc., 
- # only the syntax check is performed by this basic script, as their __main__
- # blocks might require specific setup, arguments, or start larger processes.
-}
-
-Write-Host ""
-Write-Host "--------------------------------"
-if ($all_tests_passed) {
- Write-Host "All basic tests PASSED." -ForegroundColor Green
+ Write-Host "Running 'pip check'..."
+ pip check
+ Write-Host "Running 'pip list --outdated'..."
+ pip list --outdated
 }
 else {
- Write-Error "Some tests FAILED."
+ Write-Result "requirements.txt not found" $false
 }
-Write-Host "--------------------------------"
+
+# 3. Directory and file presence check
+Write-Section "File/Directory Presence Check"
+$expected = @(
+ "action_system.py", "core_engine.py", "interface.py", "main.py", "memory_engine.py", "orchestrator.py", "system_manager.py", "system_utils.py",
+ "orama/debug_manager.py", "orama/resource_manager.py", "orama/__init__.py",
+ "data/vector_store/.gitkeep", "data/knowledge_graph/.gitkeep"
+)
+$all_present = $true
+foreach ($f in $expected) {
+ if (Test-Path $f) {
+  Write-Result "$f exists" $true
+ }
+ else {
+  Write-Result "$f missing" $false
+  $all_present = $false
+ }
+}
+
+# 4. Static analysis (flake8 if available)
+Write-Section "Static Analysis (flake8)"
+python -m flake8 .
+if ($LASTEXITCODE -eq 0) {
+ Write-Result "flake8: No issues found" $true
+}
+else {
+ Write-Result "flake8: Issues found" $false
+}
+
+# 5. Syntax check and import test for all modules
+Write-Section "Syntax & Import Test"
+$modules = @(
+ "action_system", "core_engine", "interface", "main", "memory_engine", "orchestrator", "system_manager", "system_utils",
+ "orama.debug_manager", "orama.resource_manager"
+)
+foreach ($m in $modules) {
+ Write-Host "Testing import: $m"
+ python -c "import $m"
+ Write-Result "Import $m" ($LASTEXITCODE -eq 0)
+}
+
+# 6. Class instantiation smoke test (where possible)
+Write-Section "Class Instantiation Smoke Test"
+$smoke_classes = @(
+ @{mod = "core_engine"; cls = "CognitiveEngine" },
+ @{mod = "action_system"; cls = "ActionSystem" },
+ @{mod = "memory_engine"; cls = "MemoryEngine" },
+ @{mod = "orchestrator"; cls = "Orchestrator" },
+ @{mod = "system_manager"; cls = "SystemManager" },
+ @{mod = "system_utils"; cls = "SystemMonitor" },
+ @{mod = "orama.resource_manager"; cls = "ResourceManager" },
+ @{mod = "orama.debug_manager"; cls = "DebugManager" }
+)
+foreach ($item in $smoke_classes) {
+ $mod = $item.mod; $cls = $item.cls
+ Write-Host "Trying: from $mod import $cls; $cls({})"
+ python -c "from $mod import $cls; $cls({})"
+ Write-Result "Instantiate $cls from $mod" ($LASTEXITCODE -eq 0)
+}
+
+# 7. Run __main__ blocks for demo/test code
+Write-Section "__main__ Demo/Test Execution"
+$main_modules = @(
+ "core_engine.py", "interface.py", "main.py", "memory_engine.py", "orchestrator.py", "system_utils.py", "system_manager.py"
+)
+foreach ($f in $main_modules) {
+ if (Test-Path $f) {
+  Write-Host "Running: python $f (timeout 30s)"
+  $job = Start-Job { param($f) python $f } -ArgumentList $f
+  Wait-Job $job -Timeout 30 | Out-Null
+  if ($job.State -eq "Completed") {
+   Receive-Job $job | Write-Host
+   Write-Result "Ran $f __main__ block" $true
+  }
+  else {
+   Write-Result "$f __main__ block timed out or failed" $false
+   Stop-Job $job | Out-Null
+  }
+  Remove-Job $job
+ }
+}
+
+# 8. Pytest discovery (if any test_*.py files exist)
+Write-Section "Pytest Discovery"
+$testfiles = Get-ChildItem -Recurse -Include "test_*.py"
+if ($testfiles.Count -gt 0) {
+ Write-Host "Running pytest..."
+ pytest
+ Write-Result "pytest run" ($LASTEXITCODE -eq 0)
+}
+else {
+ Write-Host "No test_*.py files found. Skipping pytest."
+}
+
+# 9. Data directory check
+Write-Section "Data Directory Check"
+$datadirs = @("data/vector_store", "data/knowledge_graph", "data/documents", "data/parameters")
+foreach ($d in $datadirs) {
+ if (Test-Path $d) {
+  Write-Result "$d exists" $true
+ }
+ else {
+  Write-Result "$d missing" $false
+ }
+}
+
+# 10. Summary
+Write-Section "Test Summary"
+Write-Host "If all [PASS] above, your ORAMA system is ready for development!" -ForegroundColor Green
 
 Pop-Location

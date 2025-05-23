@@ -745,32 +745,90 @@ class ActionSystem:
         except Exception as e:
             return "", str(e), -1
     
-    def _validate_command(self, command: str) -> Tuple[ValidationResult, str]:
+    def _validate_command(self, command: str, shell_param_true: bool) -> Tuple[ValidationResult, str]:
         """Validate a command for safety concerns."""
-        # Check for empty command
         if not command or not command.strip():
             return ValidationResult.UNSAFE, "Empty command"
-        
-        # Check for dangerous commands
+
         cmd_lower = command.lower()
-        for dangerous_cmd in self.dangerous_commands:
-            if dangerous_cmd.lower() in cmd_lower:
-                return ValidationResult.REQUIRES_CONFIRMATION, f"Command contains dangerous pattern: {dangerous_cmd}"
+
+        # 1. Check against predefined dangerous command patterns (substring match)
+        for dangerous_pattern in self.dangerous_commands:
+            if dangerous_pattern.lower() in cmd_lower:
+                return ValidationResult.REQUIRES_CONFIRMATION, f"Command contains dangerous pattern: '{dangerous_pattern}'"
+
+        # 2. Shell Character Check (refined)
+        # These characters are problematic if shell=False because they won't be interpreted by a shell
+        # and might be part of arguments in an unexpected way, or an attempt to inject shell logic.
+        # If shell=True, they are standard shell syntax, so this specific check is less relevant
+        # (covered by dangerous_commands patterns for truly risky combinations).
+        if not shell_param_true:
+            # More robust check for unquoted/unescaped shell characters might be needed if complex arguments are common.
+            # For now, a simple check. If these appear, it's suspicious when shell=False.
+            shell_chars = ['|', '>', '<', '&', ';'] # Added ';' as it's a command separator
+            for char in shell_chars:
+                if char in command: # Basic check, could be improved with regex for unquoted instances
+                    # Example: find arguments that are exactly these characters or contain them unescaped
+                    # This is tricky; for now, a simple presence check if shell=False is a starting point.
+                    # A better check might involve shlex.split and then examining tokens.
+                    # However, shlex.split itself might fail on "raw" shell metacharacters if not properly quoted.
+                    # Let's assume if shell=False, such characters are highly suspicious if present at all.
+                    return ValidationResult.REQUIRES_CONFIRMATION, f"Command for non-shell execution contains shell operator: '{char}'"
         
-        # Check for potentially unsafe shell characters in non-shell mode
-        if "|" in command or ">" in command or "<" in command or "&" in command:
-            return ValidationResult.REQUIRES_CONFIRMATION, "Command contains shell operators"
-        
-        # Check for system directories
-        system_paths = [
-            os.environ.get("WINDIR", "C:\\Windows"),
-            os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "System32"),
-            "/etc", "/var", "/usr", "/boot"
+        # 3. System Path Check (refined)
+        # Define categories of commands
+        destructive_cmds = {"rm", "del", "format", "rd", "rmdir", "mkfs"} # Add OS-specific variants as needed
+        modifying_cmds = {"mv", "move", "cp", "copy", "chmod", "chown", "attrib", "icacls", "reg", "netsh"} # Example modifying commands
+        # Read-only commands are generally safer, e.g., ls, cat, type, dir, get-childitem, find, grep
+
+        # Attempt to get the main command executable
+        try:
+            if shell_param_true:
+                # Simple split for shell=True; the first word is often the command.
+                # This is a heuristic and might not be perfect for complex shell lines.
+                cmd_parts = cmd_lower.split()
+            else:
+                # Use shlex for shell=False to better handle quoted arguments.
+                import shlex
+                cmd_parts = shlex.split(command.lower()) # Use original case command for shlex, then lower for parts
+        except ValueError: # shlex.split can fail on unterminated quotes
+            cmd_parts = cmd_lower.split() # Fallback to simple split
+
+        main_cmd = cmd_parts[0] if cmd_parts else ""
+        main_cmd_base = os.path.basename(main_cmd) # Get basename, e.g., "rm" from "/bin/rm"
+
+        system_paths_to_check = [
+            Path(os.environ.get("WINDIR", "C:\\Windows")).resolve(),
+            Path(os.environ.get("SystemRoot", "C:\\Windows")).resolve(), # Another common env var for Windows
+            Path(os.environ.get("WINDIR", "C:\\Windows"), "System32").resolve(),
+            Path("/etc").resolve(),
+            Path("/var").resolve(),
+            Path("/usr").resolve(), # /usr itself might be too broad, consider /usr/bin, /usr/sbin for specific checks
+            Path("/boot").resolve(),
+            Path("/sbin").resolve(),
+            Path("/bin").resolve(),
         ]
-        
-        for path in system_paths:
-            if path.lower() in cmd_lower:
-                return ValidationResult.REQUIRES_CONFIRMATION, f"Command references system directory: {path}"
+        # Add user profile/home for certain destructive operations if needed, e.g. deleting user's home
+        # system_paths_to_check.append(Path.home())
+
+
+        for arg in cmd_parts[1:]: # Check arguments for system paths
+            try:
+                arg_path = Path(arg).resolve() # Resolve to absolute path to normalize
+                for sys_path in system_paths_to_check:
+                    if sys_path == arg_path or sys_path in arg_path.parents:
+                        # The argument is or is within a system path
+                        if main_cmd_base in destructive_cmds:
+                            return ValidationResult.UNSAFE, f"Destructive command '{main_cmd_base}' targets system path/subpath: '{arg}' (resolved to '{arg_path}')"
+                        if main_cmd_base in modifying_cmds:
+                            return ValidationResult.REQUIRES_CONFIRMATION, f"Modifying command '{main_cmd_base}' targets system path/subpath: '{arg}' (resolved to '{arg_path}')"
+                        # For other commands (like read-only), simply referencing a system path might be okay.
+                        # However, if any part of a dangerous_commands pattern was matched earlier, that takes precedence.
+                        # If it's just 'ls /etc', it would pass this specific check.
+                        break # Found a match with a system path, no need to check other sys_paths for this arg
+            except Exception: 
+                # Path(arg).resolve() can fail if arg is not a valid path component, ignore such args for path checks.
+                pass
         
         return ValidationResult.SAFE, ""
     

@@ -1895,7 +1895,9 @@ Ensure your recovery plan is safe and has a high chance of success."""
                 model_to_use = self.model
                 try:
                     if retry_count > 0:
-                        await asyncio.sleep(1 * retry_count) # Delay before retry
+                        # Exponential backoff with a maximum delay cap
+                        delay = min(BASE_DELAY * (2 ** (retry_count - 1)), MAX_DELAY)
+                        await asyncio.sleep(delay)  # Delay before retry
                         if self.fallback_model:
                             model_to_use = self.fallback_model
                             self.logger.info(f"Streaming LLM: Using fallback model: {model_to_use} after {retry_count} retries.")
